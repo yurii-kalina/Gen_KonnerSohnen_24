@@ -91,7 +91,7 @@ constexpr uint8_t ADC_SAMPLES = 10;
 // Сирий АЦП множиться на цей коефіцієнт. Підбирається мультиметром:
 // CALIBRATE = реальна_напруга / raw  (АЦП працює в діапазоні ±6.144 В, 0.1875 мВ/LSB)
 // Відкалібровано по шині KS24: raw 13428 при 27.4 В (генератор працював, 38 А).
-constexpr float CALIBRATE_VOLTAGE_BAT = 0.0020405f;
+constexpr float CALIBRATE_VOLTAGE_BAT = 0.002050466f;
 
 // Модуль може підніматись пізніше за ESP32 — пробуємо кілька разів.
 constexpr uint8_t ADS_BEGIN_ATTEMPTS = 10;
@@ -127,8 +127,8 @@ constexpr uint16_t FUEL_SENSOR_MAX_ADC = 32000;
 // Якщо FULL < EMPTY — датчик інверсний (менше АЦП = більше палива).
 // EMPTY виміряно: порожній бак (поплавок унизу) = 26984.
 // TODO: FULL поки приблизний, виміряти на повному баку.
-constexpr uint16_t FUEL_EXT_EMPTY_ADC = 26900;
-constexpr uint16_t FUEL_EXT_FULL_ADC = 11000;
+constexpr uint16_t FUEL_EXT_EMPTY_ADC = 14800;
+constexpr uint16_t FUEL_EXT_FULL_ADC = 3800;
 
 // -----------------------------------------------------------------------------
 // Перекачка палива в бак генератора (A1 + R3)
@@ -137,8 +137,8 @@ constexpr bool PUMP_AUTO_DEFAULT = false; // після перезавантаж
 constexpr uint32_t PUMP_TICK_MS = 1000;
 // Сирий АЦП каналу A1. Авто-насос вмикається при <= LOW і вимикається при >= HIGH.
 // Якщо HIGH < LOW — датчик вважається інверсним (менше АЦП = більше палива).
-constexpr uint16_t FUEL_LEVEL_LOW_ADC = 2000;
-constexpr uint16_t FUEL_LEVEL_HIGH_ADC = 11000;
+constexpr uint16_t FUEL_LEVEL_LOW_ADC = 8000;
+constexpr uint16_t FUEL_LEVEL_HIGH_ADC = 14000;
 // Захисти (спрацювання -> насос стоп, авто блокується до POST /pump/auto)
 constexpr uint32_t PUMP_MAX_RUNTIME_SEC = 360;
 constexpr uint32_t PUMP_DRY_RUN_WINDOW_MS = 100 * 1000;
