@@ -1,0 +1,431 @@
+{
+  "info": {
+    "name": "Konner&Sohnen 24V Generator API",
+    "description": "HTTP API контролера генератора KS 24VS-DC (ESP32). Вкажіть IP плати у змінній колекції `baseUrl`, напр. http://192.168.1.50",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://192.168.1.50",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Стан",
+      "item": [
+        {
+          "name": "Статус",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "status"
+              ]
+            },
+            "description": "Повний стан, згрупований по блоках:\n\n- `generator` — режим (`mode`: manual / voltage / generator), `run` (лампа RUN світить постійно або шина KS24), мотогодини\n- `lamps` — `run`: on (світить постійно, генератор працює) / blinking (моргає, генератор стоїть) / off; oil, overload: true/false\n- `battery` — напруга АКБ з A0\n- `bus` — шина KS24: voltage (В), current (А), rpm, tempGuess. Значення null, поки кадрів немає більше 5 с\n- `fuel` — `generatorTank` (A1, аварійний перелив) і `externalTank` (A2): % і сирий АЦП\n- `pump` — насос перекачки\n- `config` — пороги"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Генератор",
+      "item": [
+        {
+          "name": "Старт",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/start",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "start"
+              ]
+            },
+            "description": "Лише в ручному режимі: замикає R1 і тримає. Генератор працює, поки контакт замкнений.\n\n- 200 `status: \"started\"` / `\"already_on\"`\n- 409 `status: \"wrong_mode\"` — режим не ручний"
+          },
+          "response": []
+        },
+        {
+          "name": "Стоп",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/stop",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "stop"
+              ]
+            },
+            "description": "З будь-якого режиму: переходить у ручний режим (R2 розімкнене) і розмикає R1 — генератор зупиняється.\n\n- 200 `status: \"stopped\"` / `\"already_off\"`"
+          },
+          "response": []
+        },
+        {
+          "name": "Режим — ручний",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/gen/mode",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "gen",
+                "mode"
+              ]
+            },
+            "description": "R2 розімкнене. R1 керується /start і /stop. Стан R1 при перемиканні не змінюється.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"mode\": \"manual\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Режим — по напрузі",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/gen/mode",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "gen",
+                "mode"
+              ]
+            },
+            "description": "R2 розімкнене. ESP сама замикає R1 при напрузі A0 <= minV і розмикає при >= maxV (зона має триматись 10 с). Поточна напруга оцінюється заново.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"mode\": \"voltage\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Режим — генератор",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/gen/mode",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "gen",
+                "mode"
+              ]
+            },
+            "description": "R2 замкнене, R1 розімкнене. Генератор сам підтримує напругу, ESP не втручається.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"mode\": \"generator\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Пороги напруги",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/gen/thresholds",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "gen",
+                "thresholds"
+              ]
+            },
+            "description": "Пороги режиму по напрузі, зберігаються в EEPROM. Потрібні обидва поля.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"minV\": 23.6, \"maxV\": 27.0}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Мотогодини",
+      "item": [
+        {
+          "name": "Отримати",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/uptime",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "uptime"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Записати фактичні",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/uptime",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "uptime"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"runtimeHours\": 123.5}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Насос",
+      "item": [
+        {
+          "name": "Стан",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/pump",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pump"
+              ]
+            },
+            "description": "Стан насоса перекачки в бак генератора (датчик A1) і аварійного переливу (GPIO34)."
+          },
+          "response": []
+        },
+        {
+          "name": "Качати N секунд",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pump/start",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pump",
+                "start"
+              ]
+            },
+            "description": "Ручний запуск на 1..PUMP_MAX_RUNTIME_SEC. Працюють лише захисти max_runtime і аварійний перелив.\n\n- 409 `status: \"overflow_alarm\"` — аварійний датчик переливу активний",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"seconds\": 30}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Стоп",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/pump/stop",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pump",
+                "stop"
+              ]
+            },
+            "description": "Зупиняє насос і вимикає авто."
+          },
+          "response": []
+        },
+        {
+          "name": "Авто — увімкнути",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pump/auto",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pump",
+                "auto"
+              ]
+            },
+            "description": "Також знімає блокування після спрацювання захисту.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"enabled\": true}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Авто — вимкнути",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pump/auto",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pump",
+                "auto"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"enabled\": false}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Оновлення",
+      "item": [
+        {
+          "name": "OTA-сторінка",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/update",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "update"
+              ]
+            },
+            "description": "ElegantOTA — відкрити в браузері."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
