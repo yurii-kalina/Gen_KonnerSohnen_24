@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Konner&Sohnen 24V Generator API",
-    "description": "HTTP API контролера генератора KS 24VS-DC (ESP32). Вкажіть IP плати у змінній колекції `baseUrl`, напр. http://192.168.1.50",
+    "description": "HTTP API контролера генератора KS 24VS-DC (ESP32). Вкажіть IP плати у змінній колекції `baseUrl`, напр. http://192.168.1.50\n\nСтруктура відповідей така сама, як у WalkenPower: успіх — `\"ok\": true` і групи даних (ті самі, що в `/status`); помилка — `\"ok\": false`, `error`, `message`, `hint`.\n\n| `error` | HTTP | Коли |\n|---|---|---|\n| `invalid_json` | 400 | тіло не JSON або не об'єкт |\n| `invalid_request` | 400 | немає поля або не той тип |\n| `out_of_range` | 400 | значення поза межами |\n| `wrong_mode` / `already_running` / `already_stopped` | 409 | старт/стоп не виконано |\n| `source_disabled` | 409 | режим remote_voltage при вимкненому віддаленому модулі |\n| `overflow_alarm` | 409 | насос заблоковано аварійним датчиком переливу |\n| `not_found` | 404 | немає такого маршруту |\n\nЗначення, яких немає (датчик не читається, шина мовчить), — `null`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -29,9 +29,8 @@
                 "status"
               ]
             },
-            "description": "Повний стан, згрупований по блоках:\n\n- `generator` — режим (`mode`: manual / voltage / generator), `run` (лампа RUN світить постійно або шина KS24), мотогодини\n- `lamps` — `run`: on (світить постійно, генератор працює) / blinking (моргає, генератор стоїть) / off; oil, overload: true/false\n- `battery` — напруга АКБ з A0\n- `bus` — шина KS24: voltage (В), current (А), rpm, tempGuess. Значення null, поки кадрів немає більше 5 с\n- `fuel` — `generatorTank` (A1, аварійний перелив) і `externalTank` (A2): % і сирий АЦП\n- `pump` — насос перекачки\n- `config` — пороги"
-          },
-          "response": []
+            "description": "Повний стан:\n\n- `generator` — `running` (лампа RUN світить постійно або шина KS24 підтверджує роботу), `runLamp`, `runLampState` (on / blinking / off), `oilAlert`, `overload` (з дебаунсом 2 с), `runtimeHours`, `mode` (manual / local_voltage / remote_voltage / generator), `runCommanded` (R1 замкнене)\n- `output` — шина KS24: `voltage`, `current`, `power`, `rpm`, `tempGuess`, `running`; null, поки кадрів немає більше 5 с\n- `battery.external` — АКБ з A0 (`raw` для калібрування); `battery.remote` — віддалений модуль (валідний 30 с після відповіді)\n- `fuel.generator` / `fuel.external` — A1 / A2, `level` 0..100 % або null\n- `auto` — `minV`, `maxV`, `voltage` з джерела поточного режиму, `zone` (low / normal / high / unknown, null поза режимами по напрузі), `dataLostSec`\n- `pump` — `running`, `manual`, `runtimeSec`, `limitSec`, `maxRuntimeSec`, `autoEnabled`, `lastStopReason` (reached_full / gen_stopped / max_runtime / dry_run / fuel_sensor_lost / overflow_alarm / manual_stop / ota / null), `overflowAlarm`"
+          }
         }
       ]
     },
@@ -52,9 +51,8 @@
                 "start"
               ]
             },
-            "description": "Лише в ручному режимі: замикає R1 і тримає. Генератор працює, поки контакт замкнений.\n\n- 200 `status: \"started\"` / `\"already_on\"`\n- 409 `status: \"wrong_mode\"` — режим не ручний"
-          },
-          "response": []
+            "description": "Лише в режимі manual: замкнути R1 і тримати. Відповідь `status: started` + `generator`. Помилки 409: `wrong_mode`, `already_running`."
+          }
         },
         {
           "name": "Стоп",
@@ -70,12 +68,33 @@
                 "stop"
               ]
             },
-            "description": "З будь-якого режиму: переходить у ручний режим (R2 розімкнене) і розмикає R1 — генератор зупиняється.\n\n- 200 `status: \"stopped\"` / `\"already_off\"`"
-          },
-          "response": []
+            "description": "З будь-якого режиму: перейти в manual (R2 розімкнене) і розімкнути R1. Відповідь `status: stopped` + `generator`. 409 `already_stopped`, якщо вже manual і R1 розімкнене."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Режим",
+      "item": [
+        {
+          "name": "Отримати",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/mode",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "mode"
+              ]
+            },
+            "description": "`mode`, `auto`, `sources`."
+          }
         },
         {
-          "name": "Режим — ручний",
+          "name": "Ручний",
           "request": {
             "method": "POST",
             "header": [
@@ -85,30 +104,28 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/gen/mode",
+              "raw": "{{baseUrl}}/mode",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "gen",
                 "mode"
               ]
             },
-            "description": "R2 розімкнене. R1 керується /start і /stop. Стан R1 при перемиканні не змінюється.",
             "body": {
               "mode": "raw",
-              "raw": "{\"mode\": \"manual\"}",
+              "raw": "{\n  \"mode\": \"manual\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
-          },
-          "response": []
+            },
+            "description": "R2 розімкнене, R1 як є; керування /start і /stop."
+          }
         },
         {
-          "name": "Режим — по напрузі",
+          "name": "По напрузі A0",
           "request": {
             "method": "POST",
             "header": [
@@ -118,30 +135,28 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/gen/mode",
+              "raw": "{{baseUrl}}/mode",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "gen",
                 "mode"
               ]
             },
-            "description": "R2 розімкнене. ESP сама замикає R1 при напрузі A0 <= minV і розмикає при >= maxV (зона має триматись 10 с). Поточна напруга оцінюється заново.",
             "body": {
               "mode": "raw",
-              "raw": "{\"mode\": \"voltage\"}",
+              "raw": "{\n  \"mode\": \"local_voltage\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
-          },
-          "response": []
+            },
+            "description": "R2 розімкнене. Напруга АКБ з A0 ≤ minV (GEN_AUTO_CONFIRM_MS поспіль) → R1 замкнути, ≥ maxV → розімкнути. Немає даних — R1 лишається як є."
+          }
         },
         {
-          "name": "Режим — генератор",
+          "name": "По напрузі віддаленого модуля",
           "request": {
             "method": "POST",
             "header": [
@@ -151,27 +166,56 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/gen/mode",
+              "raw": "{{baseUrl}}/mode",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "gen",
                 "mode"
               ]
             },
-            "description": "R2 замкнене, R1 розімкнене. Генератор сам підтримує напругу, ESP не втручається.",
             "body": {
               "mode": "raw",
-              "raw": "{\"mode\": \"generator\"}",
+              "raw": "{\n  \"mode\": \"remote_voltage\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
-          },
-          "response": []
+            },
+            "description": "Те саме, що local_voltage, але напруга з GET http://<remoteIp>/status (поле `voltage`), опитування раз на 5 с. Доступний лише коли віддалений модуль увімкнений (`/config/sources`), інакше 409 `source_disabled`."
+          }
+        },
+        {
+          "name": "Генератор",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/mode",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "mode"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"generator\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "R2 замкнене, R1 розімкнене — генератор сам тримає напругу."
+          }
         },
         {
           "name": "Пороги напруги",
@@ -184,106 +228,32 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/gen/thresholds",
+              "raw": "{{baseUrl}}/mode/thresholds",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "gen",
+                "mode",
                 "thresholds"
               ]
             },
-            "description": "Пороги режиму по напрузі, зберігаються в EEPROM. Потрібні обидва поля.",
             "body": {
               "mode": "raw",
-              "raw": "{\"minV\": 23.6, \"maxV\": 27.0}",
+              "raw": "{\n  \"minV\": 23.6,\n  \"maxV\": 27.0\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Мотогодини",
-      "item": [
-        {
-          "name": "Отримати",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/uptime",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "uptime"
-              ]
             },
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Записати фактичні",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/uptime",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "uptime"
-              ]
-            },
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\"runtimeHours\": 123.5}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
+            "description": "Спільні для local_voltage і remote_voltage, зберігаються в EEPROM. 0 ≤ minV < maxV ≤ 100."
+          }
         }
       ]
     },
     {
       "name": "Насос",
       "item": [
-        {
-          "name": "Стан",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/pump",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "pump"
-              ]
-            },
-            "description": "Стан насоса перекачки в бак генератора (датчик A1) і аварійного переливу (GPIO34)."
-          },
-          "response": []
-        },
         {
           "name": "Качати N секунд",
           "request": {
@@ -304,18 +274,17 @@
                 "start"
               ]
             },
-            "description": "Ручний запуск на 1..PUMP_MAX_RUNTIME_SEC. Працюють лише захисти max_runtime і аварійний перелив.\n\n- 409 `status: \"overflow_alarm\"` — аварійний датчик переливу активний",
             "body": {
               "mode": "raw",
-              "raw": "{\"seconds\": 30}",
+              "raw": "{\n  \"seconds\": 30\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
-          },
-          "response": []
+            },
+            "description": "Ручний запуск на N секунд (1..PUMP_MAX_RUNTIME_SEC), відлік від цього моменту, навіть якщо насос уже працював. Вимикає авто-режим. Діють лише час і аварійний перелив (409 `overflow_alarm`). Відповідь `status: started` + `pump`."
+          }
         },
         {
           "name": "Стоп",
@@ -332,9 +301,8 @@
                 "stop"
               ]
             },
-            "description": "Зупиняє насос і вимикає авто."
-          },
-          "response": []
+            "description": "Зупинити насос і вимкнути авто-режим. `status: stopped` / `already_stopped` + `pump`."
+          }
         },
         {
           "name": "Авто — увімкнути",
@@ -356,18 +324,17 @@
                 "auto"
               ]
             },
-            "description": "Також знімає блокування після спрацювання захисту.",
             "body": {
               "mode": "raw",
-              "raw": "{\"enabled\": true}",
+              "raw": "{\n  \"enabled\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
-          },
-          "response": []
+            },
+            "description": "Авто: старт при рівні A1 ≤ LOW і працюючому генераторі; стоп на HIGH, при зупинці генератора, захистах. Увімкнення знімає блокування після захисту. Режим зберігається в EEPROM."
+          }
         },
         {
           "name": "Авто — вимкнути",
@@ -389,18 +356,284 @@
                 "auto"
               ]
             },
-            "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\"enabled\": false}",
+              "raw": "{\n  \"enabled\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Насос, що працює, не зупиняється — для цього /pump/stop."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Налаштування",
+      "item": [
+        {
+          "name": "Отримати",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "config"
+              ]
+            },
+            "description": "`sources` (local — A0, завжди true; remote; remoteIp), `wifi` (status, ssid, source eeprom/config, pending, ip, rssi)."
+          }
+        },
+        {
+          "name": "Віддалений модуль — увімкнути",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"remote\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/config/sources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "config",
+                "sources"
+              ]
+            },
+            "description": "Local (A0) увімкнений завжди. Remote вмикає опитування модуля й дозволяє режим remote_voltage. Зберігається в EEPROM. Відповідь: `mode`, `auto`, `sources`."
+          }
+        },
+        {
+          "name": "Віддалений модуль — вимкнути",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"remote\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/config/sources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "config",
+                "sources"
+              ]
+            },
+            "description": "Опитування зупиняється, `battery.remote` стає невалідним. Якщо поточний режим remote_voltage — перехід у manual (R1 лишається як є)."
+          }
+        },
+        {
+          "name": "IP віддаленого модуля",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/config/remote",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "config",
+                "remote"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ip\": \"192.168.3.235\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Зберігається в EEPROM."
+          }
+        },
+        {
+          "name": "WiFi — змінити",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/config/wifi",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "config",
+                "wifi"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ssid\": \"MyNetwork\",\n  \"password\": \"secret\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Через 0.5 с після відповіді плата перепідключається. Отримала IP — дані постійні; ні за 60 с — відкат до попередніх (або config.h)."
+          }
+        },
+        {
+          "name": "WiFi — скинути до config.h",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/config/wifi",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "config",
+                "wifi"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reset\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             }
-          },
-          "response": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "Мотогодини",
+      "item": [
+        {
+          "name": "Записати фактичні",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/uptime",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "uptime"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"runtimeHours\": 123.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Поточне значення — `generator.runtimeHours` у /status."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Діагностика",
+      "item": [
+        {
+          "name": "Система",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/diag/sys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "diag",
+                "sys"
+              ]
+            },
+            "description": "`board` (bootCount, resetReason, heap), `wifi`, `ads`, `bus` (лічильники парсера KS24), `remote`, `logs`."
+          }
+        },
+        {
+          "name": "Логи",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/logs?n=50&level=info",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "n",
+                  "value": "50"
+                },
+                {
+                  "key": "level",
+                  "value": "info"
+                }
+              ]
+            },
+            "description": "Останні записи з RAM-кільця (n ≤ 150), level: debug / info / warn / error / crit."
+          }
         }
       ]
     },
@@ -421,9 +654,8 @@
                 "update"
               ]
             },
-            "description": "ElegantOTA — відкрити в браузері."
-          },
-          "response": []
+            "description": "ElegantOTA: завантажити .pio/build/esp32dev/firmware.bin. Насос зупиняється на старті, R1 не змінюється."
+          }
         }
       ]
     }

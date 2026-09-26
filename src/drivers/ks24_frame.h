@@ -9,7 +9,9 @@
 //   bytes 6-7  big-endian, 0.1 V  -> bus voltage   (26.5 V idle, 27.2 V loaded)
 //   bytes 8-9  big-endian, 0.1 A  -> charge current (0.0 A, 28.7 A)
 //   bytes 10-11 big-endian        -> RPM: 0 with engine off, ~2850 idle, ~3660 loaded
-//   byte 13    4, 5, 6 over one evening; steady within a run (slow counter?)
+//   byte 13    4, 5, 6 over one evening; steady within a run (slow counter?);
+//              0x7F on 2026-09-26 with the engine off -> not range-checked
+//   byte 25    0x14 in the first captures, 0x08 on 2026-09-26 -> not checked
 //   byte 18    0x20 engine running (commanded), 0x10 stopped -> status bits
 //   byte 29    22..27, drifts slowly with run time (temperature?)
 //   byte 30    checksum, formula NOT found (not sum/XOR/CRC-8/common CRC-16)
@@ -48,7 +50,9 @@ namespace ks24
         0x00, 0xFFFF,                            // 12 const, 13 varies
         0x1B, 0x3D, 0x30, 0x05,                  // 14-17
         0xFFFF,                                  // 18 status
-        0x01, 0x00, 0x01, 0x19, 0x00, 0x00, 0x14, 0x2F, 0xD3, 0x64, // 19-28
+        0x01, 0x00, 0x01, 0x19, 0x00, 0x00,      // 19-24
+        0xFFFF,                                  // 25 varies (0x14, 0x08 seen)
+        0x2F, 0xD3, 0x64,                        // 26-28
         0xFFFF,                                  // 29 temperature?
         0xFFFF,                                  // 30 checksum
         0x55, 0xAA};                             // 31-32 trailer
@@ -146,8 +150,7 @@ namespace ks24
         {
             return f.voltage() >= 10.0f && f.voltage() <= 40.0f &&
                    f.current() <= 80.0f &&
-                   f.rpm() <= 4500 &&
-                   f.b13() <= 31;   // status byte deliberately NOT range-checked: see statusKnown()
+                   f.rpm() <= 4500;   // status byte deliberately NOT range-checked: see statusKnown()
         }
         static bool matchesTemplate(const Frame &f)
         {

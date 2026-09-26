@@ -34,3 +34,7 @@ inline bool sensorChannelValid(uint32_t lastSuccessMs, uint32_t now)
 // serves a zeroed snapshot (every channel reads invalid).
 bool initSensors();
 SensorSnapshot getSensorSnapshot();
+
+// Diagnostics for /diag/sys
+bool sensorsAdsAvailable();
+uint32_t sensorsBusRecoveries();

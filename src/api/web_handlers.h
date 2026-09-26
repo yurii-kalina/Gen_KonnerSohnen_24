@@ -3,12 +3,19 @@
 
 void handleStart();
 void handleStop();
-void handleGenMode();
 void handleStatus();
-void handleUptime();
 void handleSetUptime();
-void handlePumpStatus();
 void handlePumpStart();
 void handlePumpStop();
 void handlePumpAuto();
-void handleGenThresholds();
+void handleLogs();
+void handleDiagSys();
+void handleNotFound();
+
+void handleGetMode();
+void handleSetMode();
+void handleSetThresholds();
+void handleGetConfig();
+void handleSetSources();
+void handleSetRemote();
+void handleSetWifi();

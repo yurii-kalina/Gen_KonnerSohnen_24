@@ -4,6 +4,19 @@
 #include "config/config.h"
 #include "config/pins.h"
 #include "ks24_frame.h"
+#include "services/logger.h"
+
+static const char *const TAG = "ks24";
+
+static constexpr uint32_t KS24_BAUD = 2400;
+// A frame takes 141 ms, the gap between frames ~860 ms. The UART hands bytes
+// over in bursts, so the silence threshold sits between the two.
+static constexpr uint32_t KS24_SILENCE_RESET_MS = 400;
+// Data is valid while the last accepted frame is younger than this (one frame per second)
+static constexpr uint32_t KS24_STALE_MS = 5000;
+
+static_assert(KS24_SILENCE_RESET_MS > 141 && KS24_SILENCE_RESET_MS < 860,
+              "KS24_SILENCE_RESET_MS must be longer than a frame and shorter than the gap");
 
 namespace
 {
@@ -46,6 +59,8 @@ namespace
 
   void forget()
   {
+    RLOGW(TAG, "bus silent for %lu ms — data dropped, run state from the RUN lamp only",
+          (unsigned long)KS24_STALE_MS);
     haveLatest = false;
     histCount = 0;
     histPos = 0;
@@ -55,9 +70,19 @@ namespace
   void onAccepted(uint32_t now)
   {
     const bool run = frame.running();
+    if (!haveLatest)
+      RLOGI(TAG, "bus frames received: %.1f V %.1f A %u rpm, status 0x%02X",
+            frame.voltage(), frame.current(), (unsigned)frame.rpm(), (unsigned)frame.status());
+    if (!frame.statusKnown())
+      RLOG_EVERY(60000, RLOG_WARN, TAG, "unknown status byte 0x%02X (treated as not running)",
+                 (unsigned)frame.status());
     // The first frame after a gap only arms the check; it never confirms alone
-    if (haveLatest && run == prevFrameRunning)
+    if (haveLatest && run == prevFrameRunning && run != confirmedRunning)
+    {
       confirmedRunning = run;
+      RLOGI(TAG, "engine %s (bus, 2 frames): %.1f V %.1f A %u rpm", run ? "RUNNING" : "stopped",
+            frame.voltage(), frame.current(), (unsigned)frame.rpm());
+    }
     prevFrameRunning = run;
 
     histV[histPos] = frame.voltage();
@@ -72,14 +97,18 @@ namespace
     haveLatest = true;
   }
 
-  // Rejected frames are printed, not hidden: a new genuine state shows up here
-  // and the template in ks24_frame.h then needs updating.
+  // Rejected frames are logged, not hidden: a new genuine state shows up here
+  // and the template in ks24_frame.h then needs updating. Every frame goes to
+  // USB, one per 10 min to the backend so a steady new state cannot flood the ring.
   void logRejected(ks24::Result r)
   {
-    Serial.print(r == ks24::Result::RejectedTemplate ? "KS24 rejected (template):" : "KS24 rejected (range):");
+    char hex[ks24::FRAME_LEN * 2 + 1];
     for (uint8_t i = 0; i < ks24::FRAME_LEN; ++i)
-      Serial.printf(" %02X", frame.raw[i]);
-    Serial.println();
+      snprintf(hex + i * 2, 3, "%02X", frame.raw[i]);
+    const char *why = r == ks24::Result::RejectedTemplate ? "template" : "range";
+    logWriteSerialOnly(RLOG_WARN, TAG, "rejected (%s): %s", why, hex);
+    RLOG_EVERY(600000, RLOG_WARN, TAG, "rejected (%s, %lu total): %s", why,
+               (unsigned long)parser.rejected(), hex);
   }
 }
 
@@ -133,4 +162,16 @@ Ks24Data getKs24Data()
     d.tempGuess = tempGuess;
   }
   return d;
+}
+
+Ks24Stats getKs24Stats()
+{
+  Ks24Stats st{};
+  st.good = parser.good();
+  st.rejectedTemplate = parser.rejectedTemplate();
+  st.rejectedRange = parser.rejectedRange();
+  st.bad = parser.bad();
+  st.dropped = parser.dropped();
+  st.truncated = parser.truncated();
+  return st;
 }

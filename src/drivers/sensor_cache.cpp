@@ -3,12 +3,28 @@
 #include <Wire.h>
 #include "config/config.h"
 #include "config/pins.h"
+#include "services/logger.h"
+
+static const char *const TAG = "ads";
+
+// Background sensor task (after start the only owner of the I2C bus)
+static constexpr uint32_t SENSOR_CYCLE_MS = 1000;
+static constexpr uint32_t ADS_SAMPLE_BUDGET_MS = 60;
+static constexpr uint8_t ADS_MIN_VALID_SAMPLES = 6;     // publish if this many samples succeeded
+static constexpr uint8_t ADS_FAILS_BEFORE_RECOVERY = 3; // fully failed cycles before a bus recovery
+static constexpr uint16_t WIRE_TIMEOUT_MS = 50;
+
+static_assert(ADS_STALE_MS > SENSOR_CYCLE_MS * (ADS_FAILS_BEFORE_RECOVERY + 1),
+              "ADS_STALE_MS must outlast a full bus-recovery cycle, otherwise the "
+              "valid flags drop during recoveries the firmware handles by itself");
 
 static bool adsAvailable = false;
 
 static SensorSnapshot cache;
 static SemaphoreHandle_t cacheMutex = nullptr;
 static uint8_t consecFullFails = 0;
+static volatile uint32_t busRecoveries = 0;
+static bool adsLostLogged = false;
 
 // ---- raw ADS1115 access -----------------------------------------------------
 // Every Wire transaction's result is checked; any failure fails the sample
@@ -143,7 +159,12 @@ static void recoverBus()
     delayMicroseconds(5);
   }
   beginBus();
-  tryFindAds();
+  ++busRecoveries;
+  if (tryFindAds())
+    RLOGW(TAG, "I2C bus recovered (#%lu), ADS1115 answers again", (unsigned long)busRecoveries);
+  else
+    RLOG_EVERY(60000, RLOG_ERROR, TAG, "I2C bus recovery #%lu: ADS1115 still not answering",
+               (unsigned long)busRecoveries);
 }
 
 static uint16_t clampRaw(float v)
@@ -188,8 +209,8 @@ static void sensorTask(void *)
     const uint32_t cycleStart = millis();
 
     // Модуль міг з'явитись пізніше (живлення піднялось після ESP32)
-    if (!adsAvailable)
-      tryFindAds();
+    if (!adsAvailable && tryFindAds())
+      RLOGI(TAG, "ADS1115 found at 0x%02X", ADS_I2C_ADDR);
 
     if (adsAvailable)
     {
@@ -206,6 +227,12 @@ static void sensorTask(void *)
 
       if (!anyOk)
       {
+        if (!adsLostLogged)
+        {
+          adsLostLogged = true;
+          RLOGW(TAG, "ADS1115 cycle failed on every channel — recovering the bus after %u such cycles",
+                (unsigned)ADS_FAILS_BEFORE_RECOVERY);
+        }
         if (++consecFullFails >= ADS_FAILS_BEFORE_RECOVERY)
         {
           recoverBus();
@@ -214,6 +241,11 @@ static void sensorTask(void *)
       }
       else
       {
+        if (adsLostLogged)
+        {
+          adsLostLogged = false;
+          RLOGI(TAG, "ADS1115 readings back");
+        }
         consecFullFails = 0;
       }
     }
@@ -228,19 +260,31 @@ bool initSensors()
 {
   beginBus();
 
-  for (uint8_t attempt = 0; attempt < ADS_BEGIN_ATTEMPTS && !tryFindAds(); ++attempt)
+  uint8_t attempts = 1;
+  for (; attempts <= ADS_BEGIN_ATTEMPTS && !tryFindAds(); ++attempts)
     delay(ADS_BEGIN_RETRY_MS);
+  if (adsAvailable)
+    logWrite(attempts > 1 ? RLOG_WARN : RLOG_INFO, TAG,
+             "ADS1115 ready at 0x%02X after %u attempt(s)", ADS_I2C_ADDR, (unsigned)attempts);
+  else
+    RLOGE(TAG, "ADS1115 not found after %u attempts — sensor task will keep retrying",
+          (unsigned)ADS_BEGIN_ATTEMPTS);
 
   cacheMutex = xSemaphoreCreateMutex();
   if (cacheMutex == nullptr)
+  {
+    RLOGC(TAG, "sensor mutex alloc failed — battery/fuel will read invalid forever");
     return false;
+  }
   // Core 0, priority 1: yields to WiFi/system tasks, isolated from loop() on core 1.
   if (xTaskCreatePinnedToCore(sensorTask, "sensors", 5120, nullptr, 1, nullptr, 0) != pdPASS)
   {
     vSemaphoreDelete(cacheMutex);
     cacheMutex = nullptr;
+    RLOGC(TAG, "sensor task FAILED to start — battery/fuel will read invalid forever");
     return false;
   }
+  RLOGI(TAG, "sensor task started on core 0");
   return true;
 }
 
@@ -253,4 +297,14 @@ SensorSnapshot getSensorSnapshot()
   out = cache;
   xSemaphoreGive(cacheMutex);
   return out;
+}
+
+bool sensorsAdsAvailable()
+{
+  return adsAvailable;
+}
+
+uint32_t sensorsBusRecoveries()
+{
+  return busRecoveries;
 }

@@ -1,157 +1,90 @@
 #pragma once
 #include <Arduino.h>
 
+
+// #define SERIAL_LOG_ENABLED
+// #define SERIAL_CONSOLE_ENABLED
+
 constexpr const char *HOST_NAME = "KonnerSohnen24";
 constexpr const char *DEFAULT_WIFI_SSID = "Home";
 constexpr const char *DEFAULT_WIFI_PASS = "31023102";
 
-// -----------------------------------------------------------------------------
-// Реле
-// -----------------------------------------------------------------------------
-// Рівень на GPIO, при якому реле замкнене
-constexpr uint8_t RELAY_ACTIVE_LEVEL = LOW;       // R1 CONTROL TERMINAL, R2 режим
-constexpr uint8_t RELAY_PUMP_ACTIVE_LEVEL = HIGH; // R3 насос
+// remote voltage module for remote_voltage mode (GET http://<IP>/status -> "voltage");
+// local source (A0) is always on, the remote one is enabled via /config/sources
+constexpr bool EXT_BAT_REMOTE_DEFAULT = false;
+constexpr const char *EXT_BAT_REMOTE_DEFAULT_IP = "192.168.3.235";
 
-// -----------------------------------------------------------------------------
-// Режими роботи
-// -----------------------------------------------------------------------------
-//   Manual    - R2 розімкнене. R1 замикається/розмикається командами /start, /stop.
-//   Voltage   - R2 розімкнене. ESP сама керує R1 по напрузі АКБ (A0), пороги MIN/MAX.
-//   Generator - R2 замкнене, R1 розімкнене. Генератор сам підтримує напругу, ESP не втручається.
+// relay GPIO level that closes the contact: R1 control, R2 mode / R3 pump
+constexpr uint8_t RELAY_ACTIVE_LEVEL = LOW;
+constexpr uint8_t RELAY_PUMP_ACTIVE_LEVEL = HIGH;
+
+// generator modes, stored in EEPROM: never renumber, only append
 enum class GenMode : uint8_t
 {
-  Manual,
-  Voltage,
-  Generator
+  Manual = 0,
+  Local = 1,
+  Generator = 2,
+  Remote = 3
 };
-// Після будь-якого перезавантаження ESP — цей режим
+// mode until one is saved in EEPROM
 constexpr GenMode GEN_MODE_DEFAULT = GenMode::Manual;
 
-// R1 тримається замкненим, поки генератор має працювати. Після будь-якого
-// перезавантаження ESP R1 розімкнене (генератор зупиняється).
-
-// -----------------------------------------------------------------------------
-// Режим Voltage: керування по АКБ (A0, у вольтах після калібрування)
-// -----------------------------------------------------------------------------
-// Напруга <= MIN -> старт (R1 замкнути), >= MAX -> стоп (R1 розімкнути).
-// Одна команда на кожен вхід у зону.
-// MIN/MAX змінюються запитом POST /gen/thresholds і зберігаються в EEPROM;
-// значення нижче — лише початкові, поки в EEPROM нічого не записано.
+// voltage thresholds for generator auto-start/stop (V), until changed via /mode/thresholds
 constexpr float GEN_AUTO_BAT_MIN_V = 23.6f;
 constexpr float GEN_AUTO_BAT_MAX_V = 27.0f;
-constexpr float GEN_AUTO_BAT_LIMIT_V = 100.0f; // допустимий діапазон порогів у запиті: 0..LIMIT
-constexpr uint32_t GEN_AUTO_CONFIRM_MS = 10000; // скільки напруга має триматись у зоні
-constexpr uint32_t GEN_AUTO_TICK_MS = 1000;
+// accepted threshold range in requests: 0..LIMIT
+constexpr float GEN_AUTO_BAT_LIMIT_V = 100.0f;
 
 static_assert(GEN_AUTO_BAT_MIN_V < GEN_AUTO_BAT_MAX_V, "GEN_AUTO_BAT_MIN_V must be below GEN_AUTO_BAT_MAX_V");
 
-// -----------------------------------------------------------------------------
-// Лампи панелі (RUN, OIL, OVERLOAD)
-// -----------------------------------------------------------------------------
-// Лампи можуть бути під ШІМ, тому читаємо серію семплів і рахуємо активні.
+// calibration constant for battery voltage (ADS1115 A0): real_voltage / raw
+constexpr float CALIBRATE_VOLTAGE_BAT = 0.00204666f;
+
+// panel lamps RUN / OIL / OVERLOAD: GPIO level while lit
 constexpr uint8_t LAMP_ACTIVE_LEVEL = HIGH;
-constexpr uint8_t LAMP_SAMPLES = 10;
-constexpr uint16_t LAMP_SAMPLE_GAP_US = 0;
-constexpr uint8_t LAMP_ACTIVE_THRESHOLD = 5;
 
-static_assert(LAMP_ACTIVE_THRESHOLD <= LAMP_SAMPLES,
-              "LAMP_ACTIVE_THRESHOLD must be <= LAMP_SAMPLES, otherwise every lamp reads OFF");
-static_assert(LAMP_SAMPLES > 0,
-              "LAMP_SAMPLES must be > 0, otherwise readLampStable always returns false");
-
-// Лампа RUN моргає раз на секунду, коли генератор стоїть, і світить постійно,
-// коли працює. "Працює" = світить без жодної перерви довше за STEADY_MS
-// (більше за період моргання).
-constexpr uint32_t RUN_LAMP_POLL_MS = 20;            // як часто опитуємо лампу
-constexpr uint32_t RUN_LAMP_MAX_GAP_MS = 100;        // пропуск опитування довший -> відлік STEADY заново
-constexpr uint32_t RUN_LAMP_STEADY_MS = 2000;        // безперервно світить стільки -> генератор працює
-constexpr uint32_t RUN_LAMP_BLINK_TIMEOUT_MS = 2500; // не світила стільки -> лампа вимкнена (не моргає)
-
-static_assert(RUN_LAMP_STEADY_MS > 1000, "RUN_LAMP_STEADY_MS must exceed the 1 s blink period");
-static_assert(RUN_LAMP_BLINK_TIMEOUT_MS > 1000, "RUN_LAMP_BLINK_TIMEOUT_MS must exceed the 1 s blink period");
-static_assert(RUN_LAMP_MAX_GAP_MS > RUN_LAMP_POLL_MS, "RUN_LAMP_MAX_GAP_MS must exceed RUN_LAMP_POLL_MS");
-
-// -----------------------------------------------------------------------------
-// Шина KS 24VS-DC (інвертор -> дисплей), див. drivers/ks24_frame.h
-// -----------------------------------------------------------------------------
-constexpr uint32_t KS24_BAUD = 2400;
-// Кадр іде 141 мс, пауза між кадрами ~860 мс. UART віддає байти пачками після
-// кінця кадру, тому поріг тиші має бути довшим за кадр і коротшим за паузу.
-constexpr uint32_t KS24_SILENCE_RESET_MS = 400;
-// Дані валідні, поки останній прийнятий кадр молодший за це (кадр раз на секунду)
-constexpr uint32_t KS24_STALE_MS = 5000;
-
-static_assert(KS24_SILENCE_RESET_MS > 141 && KS24_SILENCE_RESET_MS < 860,
-              "KS24_SILENCE_RESET_MS must be longer than a frame and shorter than the gap");
-
-// -----------------------------------------------------------------------------
-// ADS1115
-// -----------------------------------------------------------------------------
+// ADS1115 settings
 constexpr uint8_t ADC_SAMPLES = 10;
-// Сирий АЦП множиться на цей коефіцієнт. Підбирається мультиметром:
-// CALIBRATE = реальна_напруга / raw  (АЦП працює в діапазоні ±6.144 В, 0.1875 мВ/LSB)
-// Відкалібровано по шині KS24: raw 13428 при 27.4 В (генератор працював, 38 А).
-constexpr float CALIBRATE_VOLTAGE_BAT = 0.002050466f;
-
-// Модуль може підніматись пізніше за ESP32 — пробуємо кілька разів.
+constexpr uint32_t ADS_STALE_MS = 15000;
 constexpr uint8_t ADS_BEGIN_ATTEMPTS = 10;
 constexpr uint16_t ADS_BEGIN_RETRY_MS = 200;
-
 constexpr uint8_t ADS_I2C_ADDR = 0x48;
 
-// Фонова задача сенсорів (після старту — єдиний власник шини I2C).
-constexpr uint32_t SENSOR_CYCLE_MS = 1000;
-constexpr uint32_t ADS_SAMPLE_BUDGET_MS = 60;
-constexpr uint8_t ADS_MIN_VALID_SAMPLES = 6;     // публікуємо, якщо стільки семплів успішні
-constexpr uint8_t ADS_FAILS_BEFORE_RECOVERY = 3; // провалених циклів до відновлення шини
-constexpr uint16_t WIRE_TIMEOUT_MS = 50;
-
-// Канал валідний, поки останній УСПІХ молодший за це. Має перекривати повний
-// цикл відновлення шини.
-constexpr uint32_t ADS_STALE_MS = 15000;
-
-static_assert(ADS_STALE_MS > SENSOR_CYCLE_MS * (ADS_FAILS_BEFORE_RECOVERY + 1),
-              "ADS_STALE_MS must outlast a full bus-recovery cycle, otherwise the "
-              "valid flags drop during recoveries the firmware handles by itself");
-
-// -----------------------------------------------------------------------------
-// Датчики рівня палива (сирий АЦП)
-// -----------------------------------------------------------------------------
-// Показ поза цим діапазоном = обрив/КЗ датчика. ADS не виміряє більше за своє
-// живлення (3.3 В ≈ 17600, 5 В ≈ 26600), тому MAX треба поставити трохи нижче
-// за показ при відключеному датчику.
+// fuel sender raw range; outside = open or shorted sender
 constexpr uint16_t FUEL_SENSOR_MIN_ADC = 100;
 constexpr uint16_t FUEL_SENSOR_MAX_ADC = 32000;
 
-// A2 зовнішній бак — лише показ. 0% = EMPTY, 100% = FULL.
-// Якщо FULL < EMPTY — датчик інверсний (менше АЦП = більше палива).
-// EMPTY виміряно: порожній бак (поплавок унизу) = 26984.
-// TODO: FULL поки приблизний, виміряти на повному баку.
+// fuel level sensor external tank (A2, display only); FULL < EMPTY = inverted sender
 constexpr uint16_t FUEL_EXT_EMPTY_ADC = 14800;
 constexpr uint16_t FUEL_EXT_FULL_ADC = 3800;
 
+// generator run with no internet (manual mode only)
+constexpr uint32_t NET_LOSS_AUTO_STOP_MS = 5UL * 60 * 60 * 1000;
+
 // -----------------------------------------------------------------------------
-// Перекачка палива в бак генератора (A1 + R3)
+// Насос переливу палива (A1 + R3)
 // -----------------------------------------------------------------------------
-constexpr bool PUMP_AUTO_DEFAULT = false; // після перезавантаження ESP — ручний режим
-constexpr uint32_t PUMP_TICK_MS = 1000;
-// Сирий АЦП каналу A1. Авто-насос вмикається при <= LOW і вимикається при >= HIGH.
-// Якщо HIGH < LOW — датчик вважається інверсним (менше АЦП = більше палива).
+// pump mode until one is saved in EEPROM
+constexpr bool PUMP_AUTO_DEFAULT = false;
+// fuel level sensor generator tank: pump starts at LOW, stops at HIGH
 constexpr uint16_t FUEL_LEVEL_LOW_ADC = 8000;
 constexpr uint16_t FUEL_LEVEL_HIGH_ADC = 14000;
-// Захисти (спрацювання -> насос стоп, авто блокується до POST /pump/auto)
 constexpr uint32_t PUMP_MAX_RUNTIME_SEC = 360;
+// dry run: the level must move toward full by DELTA within each window
 constexpr uint32_t PUMP_DRY_RUN_WINDOW_MS = 100 * 1000;
-constexpr uint16_t FUEL_DRY_RUN_MIN_DELTA_ADC = 50; // мін. зростання рівня за вікно
-
-// Аварійний перелив (GPIO34): рівень, при якому аварія, і скільки він має
-// триматись, щоб відсіяти завади. Спрацювання зупиняє насос у будь-якому
-// режимі й блокує авто; поки аварія активна, насос не вмикається взагалі.
+constexpr uint16_t FUEL_DRY_RUN_MIN_DELTA_ADC = 50;
+// emergency overflow sensor (GPIO34)
 constexpr uint8_t FUEL_OVERFLOW_ALARM_LEVEL = LOW;
 constexpr uint32_t FUEL_OVERFLOW_DEBOUNCE_MS = 100;
 
+// Watchdog
+constexpr uint32_t LOOP_WDT_TIMEOUT_S = 60;
+
 // -----------------------------------------------------------------------------
-// Стан генератора
+// Логування
 // -----------------------------------------------------------------------------
-constexpr int RUNTIME_CHECKPOINT_MS = 5 * 60 * 1000;      // 5 хвилин
-constexpr uint32_t STATE_POLL_PERIOD_MS = 10000;
+constexpr uint8_t LOG_DEFAULT_SERIAL_LEVEL = 0; // RLOG_DEBUG
+constexpr uint8_t LOG_DEFAULT_NET_LEVEL = 1;    // RLOG_INFO
+
+// Log backend URL
+constexpr const char *LOG_BACKEND_URL = "http://192.168.121.252:5801/api/device-logs";

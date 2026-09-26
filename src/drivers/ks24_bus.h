@@ -19,3 +19,15 @@ void initKs24Bus();
 // Call from loop(): drains the UART and parses frames
 void updateKs24Bus();
 Ks24Data getKs24Data();
+
+// Parser counters since boot, for /diag/sys
+struct Ks24Stats
+{
+  uint32_t good;
+  uint32_t rejectedTemplate;
+  uint32_t rejectedRange;
+  uint32_t bad;
+  uint32_t dropped;
+  uint32_t truncated;
+};
+Ks24Stats getKs24Stats();
